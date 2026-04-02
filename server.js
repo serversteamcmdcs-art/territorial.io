@@ -1,34 +1,22 @@
 const express = require('express');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const path = require('path');
-
-// 1. Настройка веб-сервера для игры
 const app = express();
+
+// ВАЖНО: Разрешаем Дискорду показывать нашу игру внутри своего окна
+app.use((req, res, next) => {
+    res.setHeader("Content-Security-Policy", "frame-ancestors https://discord.com https://*.discordapp.com");
+    res.setHeader("X-Frame-Options", "ALLOW-FROM https://discord.com");
+    next();
+});
+
+// Раздаем статические файлы (твой index.html)
 app.use(express.static(path.join(__dirname, '/')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Сайт игры запущен на порту ${PORT}`));
-
-// 2. Настройка бота
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-
-client.once('ready', () => {
-    console.log(`Бот ${client.user.tag} готов!`);
+app.listen(PORT, () => {
+    console.log(`Сервер запущен на порту ${PORT}`);
 });
-
-client.on('messageCreate', async (message) => {
-    if (message.content === '!play') {
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel('Играть в Discord')
-                .setStyle(ButtonStyle.Link)
-                .setURL(`https://discord.com/app-assets/${client.user.id}/index.html`) // Ссылка для Activity
-        );
-
-        await message.reply({ content: 'Нажми кнопку ниже, чтобы запустить игру!', components: [row] });
-    }
-});
-
-// Вместо 'TOKEN' вставь свой токен из Discord Portal (или добавь в Environment Variables на Render)
-client.login(process.env.DISCORD_TOKEN);
