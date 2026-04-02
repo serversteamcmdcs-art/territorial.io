@@ -1,168 +1,103 @@
-const http = require("http");
-const fs = require("fs");
 const WebSocket = require("ws");
+const wss = new WebSocket.Server({ port: 3000 });
 
-const PORT = process.env.PORT || 3000;
-const MAP_SIZE = 80;
-const TICK = 200;
-const BOTS = 5;
+const MAP = 32;
 
 let players = {};
-let sockets = {};
 let map = [];
 
-// ===== HTTP сервер (для Render) =====
-const server = http.createServer((req, res) => {
-  let file = "public/index.html";
-  if (req.url !== "/") file = "public" + req.url;
-
-  fs.readFile(file, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      return res.end("404");
-    }
-    res.writeHead(200);
-    res.end(data);
-  });
-});
-
-// ===== WebSocket =====
-const wss = new WebSocket.Server({ server });
-
-// ===== карта =====
-function initMap() {
-  map = [];
-  for (let y = 0; y < MAP_SIZE; y++) {
-    let row = [];
-    for (let x = 0; x < MAP_SIZE; x++) {
-      row.push({ owner: null, army: 0 });
-    }
-    map.push(row);
+// карта
+for (let y = 0; y < MAP; y++) {
+  map[y] = [];
+  for (let x = 0; x < MAP; x++) {
+    map[y][x] = { owner: 0, army: 0 };
   }
 }
 
-// ===== спавн =====
-function spawn(id) {
-  let x, y;
-  do {
-    x = Math.floor(Math.random() * MAP_SIZE);
-    y = Math.floor(Math.random() * MAP_SIZE);
-  } while (map[y][x].owner);
-
-  map[y][x] = { owner: id, army: 30 };
+// отправка бинарного пакета
+function send(ws, buffer) {
+  ws.send(buffer);
 }
 
-// ===== рассылка =====
-function broadcast(data) {
-  const msg = JSON.stringify(data);
-  Object.values(sockets).forEach(ws => {
-    if (ws.readyState === 1) ws.send(msg);
+// init пакет
+function sendInit(ws, id) {
+  const buf = new Uint8Array(2);
+  buf[0] = 1; // тип
+  buf[1] = id;
+  send(ws, buf);
+}
+
+// update пакет
+function sendUpdate() {
+  const buf = new Uint8Array(1 + MAP * MAP * 2);
+  buf[0] = 2;
+
+  let i = 1;
+
+  for (let y = 0; y < MAP; y++) {
+    for (let x = 0; x < MAP; x++) {
+      buf[i++] = map[y][x].owner || 0;
+      buf[i++] = Math.min(map[y][x].army, 255);
+    }
+  }
+
+  wss.clients.forEach(c => {
+    if (c.readyState === 1) c.send(buf);
   });
 }
 
-// ===== атака =====
-function attack(id, from, to) {
-  let a = map[from.y]?.[from.x];
-  let b = map[to.y]?.[to.x];
-
-  if (!a || !b) return;
-  if (a.owner !== id) return;
-  if (a.army < 2) return;
-
-  let power = Math.floor(a.army * 0.5);
-  a.army -= power;
-
-  if (b.owner === id) {
-    b.army += power;
-  } else {
-    b.army -= power;
-
-    if (b.army <= 0) {
-      b.owner = id;
-      b.army = Math.abs(b.army);
+// тик
+setInterval(() => {
+  for (let y = 0; y < MAP; y++) {
+    for (let x = 0; x < MAP; x++) {
+      if (map[y][x].owner) map[y][x].army++;
     }
   }
-}
+  sendUpdate();
+}, 200);
 
-// ===== боты =====
-function botAI(id) {
-  for (let y = 0; y < MAP_SIZE; y++) {
-    for (let x = 0; x < MAP_SIZE; x++) {
-      let c = map[y][x];
-      if (c.owner === id && c.army > 20) {
-        let dirs = [
-          { x: 1, y: 0 }, { x: -1, y: 0 },
-          { x: 0, y: 1 }, { x: 0, y: -1 }
-        ];
-
-        let d = dirs[Math.floor(Math.random() * dirs.length)];
-
-        attack(id, { x, y }, { x: x + d.x, y: y + d.y });
-      }
-    }
-  }
-}
-
-// ===== тик =====
-function tick() {
-  // рост армии
-  for (let y = 0; y < MAP_SIZE; y++) {
-    for (let x = 0; x < MAP_SIZE; x++) {
-      let c = map[y][x];
-      if (c.owner) c.army += 1;
-    }
-  }
-
-  // боты
-  Object.keys(players).forEach(id => {
-    if (players[id].bot) botAI(id);
-  });
-
-  broadcast({ type: "update", map });
-}
-
-// ===== запуск =====
-initMap();
-
-// создаём ботов
-for (let i = 0; i < BOTS; i++) {
-  let id = "bot_" + i;
-  players[id] = { id, bot: true };
-  spawn(id);
-}
-
-setInterval(tick, TICK);
-
-// ===== подключение =====
+// подключение
 wss.on("connection", (ws) => {
-  const id = "p" + Math.random().toString(36).slice(2, 7);
+  const id = Math.floor(Math.random() * 200) + 1;
 
-  players[id] = { id };
-  sockets[id] = ws;
+  players[id] = ws;
 
-  spawn(id);
+  // спавн
+  let x = Math.floor(Math.random() * MAP);
+  let y = Math.floor(Math.random() * MAP);
+  map[y][x] = { owner: id, army: 20 };
 
-  ws.send(JSON.stringify({
-    type: "init",
-    id,
-    map
-  }));
+  sendInit(ws, id);
 
   ws.on("message", (msg) => {
-    let data;
-    try { data = JSON.parse(msg); } catch { return; }
+    const data = new Uint8Array(msg);
 
-    if (data.type === "attack") {
-      attack(id, data.from, data.to);
+    if (data[0] === 3) { // attack
+      const fx = data[1];
+      const fy = data[2];
+      const tx = data[3];
+      const ty = data[4];
+
+      const a = map[fy]?.[fx];
+      const b = map[ty]?.[tx];
+
+      if (!a || !b) return;
+      if (a.owner !== id) return;
+
+      let power = Math.floor(a.army / 2);
+      a.army -= power;
+
+      if (b.owner === id) {
+        b.army += power;
+      } else {
+        b.army -= power;
+        if (b.army <= 0) {
+          b.owner = id;
+          b.army = Math.abs(b.army);
+        }
+      }
     }
   });
-
-  ws.on("close", () => {
-    delete players[id];
-    delete sockets[id];
-  });
 });
 
-server.listen(PORT, () => {
-  console.log("🚀 Server running on port " + PORT);
-});
+console.log("🚀 Binary server ws://localhost:3000");
