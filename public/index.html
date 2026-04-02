@@ -35,35 +35,34 @@
   <canvas id="canvasA" width="128" height="128"></canvas>
 
   <script>
-/* ===== ПОЛНАЯ ОТВЯЗКА ОТ territorial.io ===== */
+/* 💣 ПОЛНОЕ ОТКЛЮЧЕНИЕ territorial клиента */
 
 (function() {
   const RealWS = window.WebSocket;
 
-  window.WebSocket = function(url, protocols) {
-    console.log("❌ Блокируем:", url);
+  window.WebSocket = function() {
+    console.log("❌ Оригинальный WS заблокирован");
 
-    // всегда подключаемся к своему серверу
-    const newUrl = location.origin.replace("http", "ws");
-
-    console.log("✅ Подключаем к:", newUrl);
-
-    const ws = new RealWS(newUrl, protocols);
-
-    // 🔥 глушим бинарные пакеты (чтобы не ломался сервер)
-    const realSend = ws.send;
-    ws.send = function(data) {
-      if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
-        // игнорируем оригинальные пакеты
-        return;
-      }
-      realSend.call(ws, data);
+    // создаём "пустой" сокет (чтобы код не падал)
+    return {
+      send: () => {},
+      close: () => {},
+      readyState: 1,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      onopen: null,
+      onmessage: null,
+      onclose: null
     };
-
-    return ws;
   };
 })();
-  </script>
+</script>
+
+<script>
+/* 💣 глушим ошибки клиента */
+window.onerror = () => true;
+window.onunhandledrejection = () => true;
+</script>
 
   <script>
     "use strict";
